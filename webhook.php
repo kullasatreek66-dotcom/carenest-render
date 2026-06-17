@@ -1,8 +1,71 @@
 <?php
 date_default_timezone_set("Asia/Bangkok");
+error_reporting(E_ALL);
+ini_set("display_errors", 0);
 
+/* =========================
+   Environment Variables
+========================= */
 $accessToken = getenv("LINE_CHANNEL_ACCESS_TOKEN");
 
+$dbHost = getenv("DB_HOST");
+$dbName = getenv("DB_NAME");
+$dbUser = getenv("DB_USER");
+$dbPass = getenv("DB_PASS");
+$dbPort = getenv("DB_PORT") ?: 3306;
+
+/* =========================
+   Helper Functions
+========================= */
+function replyLine($replyToken, $replyText, $accessToken) {
+    $replyData = [
+        "replyToken" => $replyToken,
+        "messages" => [
+            [
+                "type" => "text",
+                "text" => $replyText
+            ]
+        ]
+    ];
+
+    $ch = curl_init("https://api.line.me/v2/bot/message/reply");
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($replyData, JSON_UNESCAPED_UNICODE));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        "Content-Type: application/json",
+        "Authorization: Bearer " . $accessToken
+    ]);
+
+    curl_exec($ch);
+    curl_close($ch);
+}
+
+function formatDateThai($date) {
+    if (!$date || $date === "0000-00-00") {
+        return "-";
+    }
+
+    $time = strtotime($date);
+    if (!$time) {
+        return $date;
+    }
+
+    return date("d/m/Y", $time);
+}
+
+function pick($row, $keys, $default = "-") {
+    foreach ($keys as $key) {
+        if (isset($row[$key]) && $row[$key] !== "" && $row[$key] !== null) {
+            return $row[$key];
+        }
+    }
+    return $default;
+}
+
+/* =========================
+   รับข้อมูลจาก LINE
+========================= */
 $input = file_get_contents("php://input");
 $data = json_decode($input, true);
 
@@ -14,117 +77,283 @@ if (!isset($data["events"][0])) {
 
 $event = $data["events"][0];
 
-if (!isset($event["replyToken"])) {
+if (($event["type"] ?? "") !== "message") {
     http_response_code(200);
     echo "OK";
     exit;
 }
 
-$replyToken = $event["replyToken"];
+$replyToken = $event["replyToken"] ?? "";
+$messageText = trim($event["message"]["text"] ?? "");
+$lineUserId = $event["source"]["userId"] ?? "";
 
-$userText = "";
-if (isset($event["message"]["text"])) {
-    $userText = trim($event["message"]["text"]);
+/* =========================
+   เช็ก Environment
+========================= */
+if (!$accessToken || !$dbHost || !$dbName || !$dbUser || !$dbPass) {
+    replyLine($replyToken, "❌ ยังตั้งค่า Environment Variables บน Render ไม่ครบ", $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
 }
 
-/*
-|--------------------------------------------------------------------------
-| ข้อมูลจริงจากหน้าเว็บ CareNest
-|--------------------------------------------------------------------------
-*/
-$childNickname = "Toy";
-$childFullName = "Tinnaporn Vej-aporn";
-$developmentAge = "31 เดือน";
+/* =========================
+   เชื่อมฐานข้อมูล
+========================= */
+$conn = @new mysqli($dbHost, $dbUser, $dbPass, $dbName, (int)$dbPort);
 
-if (mb_strpos($userText, "วัคซีน") !== false) {
-
-    $replyText =
-        "💉 Vaccine Summary\n\n" .
-        "👶 เด็ก: " . $childNickname . "\n" .
-        "ชื่อเต็ม: " . $childFullName . "\n\n" .
-        "ได้รับวัคซีนแล้ว 2 รายการ\n\n" .
-        "วัคซีนล่าสุด: MMR\n" .
-        "วันที่รับ: 30/12/2019\n\n" .
-        "รายการวัคซีนที่บันทึกไว้:\n" .
-        "1. MMR — 30 Dec 2019\n" .
-        "2. BCG — 08 May 2019\n\n" .
-        "📅 วัคซีนถัดไป: HB 2\n" .
-        "อายุที่ควรได้รับ: 1 เดือน\n\n" .
-        "อ้างอิงจากข้อมูลในระบบ CareNest";
-
-} elseif (mb_strpos($userText, "โภชนาการ") !== false) {
-
-    $replyText =
-        "🍽️ Nutrition Summary\n\n" .
-        "👶 เด็ก: " . $childNickname . "\n" .
-        "ชื่อเต็ม: " . $childFullName . "\n\n" .
-        "ช่วงอายุ: 2–5 Years\n" .
-        "คำแนะนำ: 3 main meals, 5 food groups, limit sugar/salt.\n\n" .
-        "ปริมาณอาหารแนะนำ:\n" .
-        "• Rice/Grains: 4 ladles\n" .
-        "• Meat/Fish: 3–4 tbsp\n" .
-        "• Vegetables: 1.5 ladles\n" .
-        "• Milk: 2 glasses\n\n" .
-        "ตัวอย่างเมนูอาหาร:\n" .
-        "• Grilled Salmon Rice\n" .
-        "• Pancake & Fresh Fruit Set\n" .
-        "• Colorful Mixed Fried Rice\n" .
-        "• Rice Noodle Chicken Soup\n\n" .
-        "อ้างอิงจากข้อมูลในระบบ CareNest";
-
-} elseif (mb_strpos($userText, "พัฒนาการ") !== false) {
-
-    $replyText =
-        "🧸 Development Summary\n\n" .
-        "👶 เด็ก: " . $childNickname . "\n" .
-        "ชื่อเต็ม: " . $childFullName . "\n" .
-        "Milestones: " . $developmentAge . "\n\n" .
-        "รายการพัฒนาการที่แสดงในระบบ:\n" .
-        "• Gross Motor (GM): Jumps with both feet off the ground\n" .
-        "• Fine Motor (FM): Uses simple tools to solve tasks independently\n" .
-        "• Receptive Language (RL): Identifies 7 different body parts correctly\n" .
-        "• Expressive Language (EL): Responds with appropriate \"Yes\" or \"No\"\n" .
-        "• Personal & Social (PS): Able to wash and dry hands by themselves\n\n" .
-        "หมายเหตุ: จากหน้าระบบยังไม่ได้บันทึกผลผ่าน/ไม่ผ่าน และยังไม่มี personal notes\n\n" .
-        "อ้างอิงจากข้อมูลในระบบ CareNest";
-
-} else {
-
-    $replyText =
-        "สวัสดีค่ะ 🌿\n" .
-        "CareNest Bot พร้อมให้บริการ\n\n" .
-        "พิมพ์คำที่ต้องการดูข้อมูลได้เลย:\n" .
-        "• วัคซีน\n" .
-        "• โภชนาการ\n" .
-        "• พัฒนาการ";
+if ($conn->connect_error) {
+    replyLine(
+        $replyToken,
+        "❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้\n\nError: " . $conn->connect_error,
+        $accessToken
+    );
+    http_response_code(200);
+    echo "OK";
+    exit;
 }
 
-$replyData = [
-    "replyToken" => $replyToken,
-    "messages" => [
-        [
-            "type" => "text",
-            "text" => $replyText
-        ]
-    ]
-];
+$conn->set_charset("utf8mb4");
 
-$options = [
-    "http" => [
-        "method" => "POST",
-        "header" =>
-            "Content-Type: application/json\r\n" .
-            "Authorization: Bearer " . $accessToken . "\r\n",
-        "content" => json_encode($replyData, JSON_UNESCAPED_UNICODE),
-        "ignore_errors" => true
-    ]
-];
+/* =========================
+   หา user จาก line_user_id
+   ถ้าไม่พบ ใช้ user_id แรกเพื่อเดโมก่อน
+========================= */
+$user = null;
 
-file_get_contents(
-    "https://api.line.me/v2/bot/message/reply",
-    false,
-    stream_context_create($options)
-);
+if ($lineUserId !== "") {
+    $stmt = $conn->prepare("
+        SELECT user_id, fullname
+        FROM users
+        WHERE line_user_id = ?
+        LIMIT 1
+    ");
+
+    if ($stmt) {
+        $stmt->bind_param("s", $lineUserId);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+    }
+}
+
+if (!$user) {
+    $result = $conn->query("
+        SELECT user_id, fullname
+        FROM users
+        ORDER BY user_id ASC
+        LIMIT 1
+    ");
+    $user = $result ? $result->fetch_assoc() : null;
+}
+
+if (!$user) {
+    replyLine($replyToken, "❌ ไม่พบข้อมูลผู้ใช้ในฐานข้อมูล", $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+/* =========================
+   หาเด็กคนแรกของ user
+========================= */
+$stmt = $conn->prepare("
+    SELECT child_id, child_name, nickname, birthdate
+    FROM children
+    WHERE user_id = ?
+    ORDER BY child_id ASC
+    LIMIT 1
+");
+
+$stmt->bind_param("i", $user["user_id"]);
+$stmt->execute();
+$child = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+if (!$child) {
+    replyLine($replyToken, "❌ ยังไม่มีข้อมูลเด็กในระบบ", $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+$childId = $child["child_id"];
+$childName = $child["nickname"] ?: $child["child_name"];
+$childFullName = $child["child_name"];
+
+/* =========================
+   คำสั่ง: วัคซีน
+========================= */
+if (mb_strpos($messageText, "วัคซีน") !== false) {
+
+    $stmt = $conn->prepare("
+        SELECT vaccine_name, date_administered, notes
+        FROM vaccine_records
+        WHERE child_id = ?
+        ORDER BY date_administered DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $childId);
+    $stmt->execute();
+    $latest = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS total
+        FROM vaccine_records
+        WHERE child_id = ?
+    ");
+    $stmt->bind_param("i", $childId);
+    $stmt->execute();
+    $count = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $total = $count["total"] ?? 0;
+
+    if ($latest) {
+        $replyText =
+            "💉 Vaccine Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n" .
+            "ชื่อเต็ม: " . $childFullName . "\n\n" .
+            "ได้รับวัคซีนแล้ว " . $total . " รายการ\n\n" .
+            "วัคซีนล่าสุด: " . $latest["vaccine_name"] . "\n" .
+            "วันที่รับ: " . formatDateThai($latest["date_administered"]) . "\n" .
+            "หมายเหตุ: " . ($latest["notes"] ?: "-") . "\n\n" .
+            "ข้อมูลนี้ดึงจากฐานข้อมูล CareNest";
+    } else {
+        $replyText =
+            "💉 Vaccine Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n\n" .
+            "ยังไม่มีข้อมูลวัคซีนในฐานข้อมูล";
+    }
+
+    replyLine($replyToken, $replyText, $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+/* =========================
+   คำสั่ง: โภชนาการ
+========================= */
+if (mb_strpos($messageText, "โภชนาการ") !== false) {
+
+    $stmt = $conn->prepare("
+        SELECT *
+        FROM growth_records
+        WHERE child_id = ?
+        ORDER BY growth_id DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $childId);
+    $stmt->execute();
+    $growth = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    if ($growth) {
+        $weight = pick($growth, ["weight", "weight_kg"]);
+        $height = pick($growth, ["height", "height_cm"]);
+        $bmi = pick($growth, ["bmi"]);
+        $status = pick($growth, ["status", "nutrition_status"]);
+        $recordDate = pick($growth, ["record_date", "created_at"]);
+
+        if (($bmi === "-" || $bmi === "") && is_numeric($weight) && is_numeric($height) && $height > 0) {
+            $bmi = number_format($weight / pow($height / 100, 2), 2);
+        }
+
+        $replyText =
+            "🥗 Nutrition Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n" .
+            "ชื่อเต็ม: " . $childFullName . "\n\n" .
+            "น้ำหนักล่าสุด: " . $weight . " กก.\n" .
+            "ส่วนสูงล่าสุด: " . $height . " ซม.\n" .
+            "BMI: " . $bmi . "\n" .
+            "สถานะโภชนาการ: " . $status . "\n" .
+            "วันที่บันทึก: " . formatDateThai($recordDate) . "\n\n" .
+            "ข้อมูลนี้ดึงจากฐานข้อมูล CareNest";
+    } else {
+        $replyText =
+            "🥗 Nutrition Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n\n" .
+            "ยังไม่มีข้อมูลโภชนาการในฐานข้อมูล";
+    }
+
+    replyLine($replyToken, $replyText, $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+/* =========================
+   คำสั่ง: พัฒนาการ
+========================= */
+if (mb_strpos($messageText, "พัฒนาการ") !== false) {
+
+    $stmt = $conn->prepare("
+        SELECT *
+        FROM development_records
+        WHERE child_id = ?
+        ORDER BY dev_id DESC
+        LIMIT 1
+    ");
+    $stmt->bind_param("i", $childId);
+    $stmt->execute();
+    $dev = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) AS total
+        FROM development_records
+        WHERE child_id = ?
+    ");
+    $stmt->bind_param("i", $childId);
+    $stmt->execute();
+    $count = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    $total = $count["total"] ?? 0;
+
+    if ($dev) {
+        $age = pick($dev, ["age_months", "month_age", "milestone_age"]);
+        $result = pick($dev, ["result", "status", "development_status"]);
+        $note = pick($dev, ["notes", "note", "personal_notes"]);
+        $recordDate = pick($dev, ["record_date", "created_at"]);
+
+        $replyText =
+            "🧸 Development Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n" .
+            "ชื่อเต็ม: " . $childFullName . "\n\n" .
+            "มีบันทึกพัฒนาการ " . $total . " รายการ\n" .
+            "ช่วงอายุล่าสุด: " . $age . "\n" .
+            "ผลล่าสุด: " . $result . "\n" .
+            "หมายเหตุ: " . $note . "\n" .
+            "วันที่บันทึก: " . formatDateThai($recordDate) . "\n\n" .
+            "ข้อมูลนี้ดึงจากฐานข้อมูล CareNest";
+    } else {
+        $replyText =
+            "🧸 Development Summary\n\n" .
+            "👶 เด็ก: " . $childName . "\n\n" .
+            "ยังไม่มีข้อมูลพัฒนาการในฐานข้อมูล";
+    }
+
+    replyLine($replyToken, $replyText, $accessToken);
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+/* =========================
+   Default Reply
+========================= */
+$replyText =
+    "สวัสดีค่ะ 🌿\n" .
+    "CareNest Bot พร้อมให้บริการ\n\n" .
+    "พิมพ์คำที่ต้องการดูข้อมูลได้เลย:\n" .
+    "• วัคซีน\n" .
+    "• โภชนาการ\n" .
+    "• พัฒนาการ";
+
+replyLine($replyToken, $replyText, $accessToken);
 
 http_response_code(200);
 echo "OK";
