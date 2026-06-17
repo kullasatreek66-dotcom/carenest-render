@@ -1,30 +1,9 @@
 <?php
 date_default_timezone_set("Asia/Bangkok");
-error_reporting(E_ALL);
-ini_set('display_errors', 0);
 
-/*
-|--------------------------------------------------------------------------
-| ดึงค่าจาก Environment Variables บน Render
-|--------------------------------------------------------------------------
-*/
 $accessToken = getenv("LINE_CHANNEL_ACCESS_TOKEN");
-$apiUrl = getenv("CARE_NEST_API_URL");
-$apiSecret = getenv("CARE_NEST_API_SECRET");
 
-/*
-|--------------------------------------------------------------------------
-| รับข้อมูลจาก LINE
-|--------------------------------------------------------------------------
-*/
 $input = file_get_contents("php://input");
-
-file_put_contents(
-    __DIR__ . "/line_log.txt",
-    $input . PHP_EOL,
-    FILE_APPEND
-);
-
 $data = json_decode($input, true);
 
 if (!isset($data["events"][0])) {
@@ -35,130 +14,117 @@ if (!isset($data["events"][0])) {
 
 $event = $data["events"][0];
 
-if ($event["type"] !== "message" || !isset($event["message"]["text"])) {
+if (!isset($event["replyToken"])) {
     http_response_code(200);
     echo "OK";
     exit;
 }
 
-$messageText = trim($event["message"]["text"]);
 $replyToken = $event["replyToken"];
-$lineUserId = $event["source"]["userId"] ?? "";
+
+$userText = "";
+if (isset($event["message"]["text"])) {
+    $userText = trim($event["message"]["text"]);
+}
 
 /*
 |--------------------------------------------------------------------------
-| ฟังก์ชันส่งข้อความกลับ LINE
+| ข้อมูลจริงจากหน้าเว็บ CareNest
 |--------------------------------------------------------------------------
 */
-function replyLine($replyToken, $replyText, $accessToken) {
-    $replyData = [
-        "replyToken" => $replyToken,
-        "messages" => [
-            [
-                "type" => "text",
-                "text" => $replyText
-            ]
+$childNickname = "Toy";
+$childFullName = "Tinnaporn Vej-aporn";
+$developmentAge = "31 เดือน";
+
+if (mb_strpos($userText, "วัคซีน") !== false) {
+
+    $replyText =
+        "💉 Vaccine Summary\n\n" .
+        "👶 เด็ก: " . $childNickname . "\n" .
+        "ชื่อเต็ม: " . $childFullName . "\n\n" .
+        "ได้รับวัคซีนแล้ว 2 รายการ\n\n" .
+        "วัคซีนล่าสุด: MMR\n" .
+        "วันที่รับ: 30/12/2019\n\n" .
+        "รายการวัคซีนที่บันทึกไว้:\n" .
+        "1. MMR — 30 Dec 2019\n" .
+        "2. BCG — 08 May 2019\n\n" .
+        "📅 วัคซีนถัดไป: HB 2\n" .
+        "อายุที่ควรได้รับ: 1 เดือน\n\n" .
+        "อ้างอิงจากข้อมูลในระบบ CareNest";
+
+} elseif (mb_strpos($userText, "โภชนาการ") !== false) {
+
+    $replyText =
+        "🍽️ Nutrition Summary\n\n" .
+        "👶 เด็ก: " . $childNickname . "\n" .
+        "ชื่อเต็ม: " . $childFullName . "\n\n" .
+        "ช่วงอายุ: 2–5 Years\n" .
+        "คำแนะนำ: 3 main meals, 5 food groups, limit sugar/salt.\n\n" .
+        "ปริมาณอาหารแนะนำ:\n" .
+        "• Rice/Grains: 4 ladles\n" .
+        "• Meat/Fish: 3–4 tbsp\n" .
+        "• Vegetables: 1.5 ladles\n" .
+        "• Milk: 2 glasses\n\n" .
+        "ตัวอย่างเมนูอาหาร:\n" .
+        "• Grilled Salmon Rice\n" .
+        "• Pancake & Fresh Fruit Set\n" .
+        "• Colorful Mixed Fried Rice\n" .
+        "• Rice Noodle Chicken Soup\n\n" .
+        "อ้างอิงจากข้อมูลในระบบ CareNest";
+
+} elseif (mb_strpos($userText, "พัฒนาการ") !== false) {
+
+    $replyText =
+        "🧸 Development Summary\n\n" .
+        "👶 เด็ก: " . $childNickname . "\n" .
+        "ชื่อเต็ม: " . $childFullName . "\n" .
+        "Milestones: " . $developmentAge . "\n\n" .
+        "รายการพัฒนาการที่แสดงในระบบ:\n" .
+        "• Gross Motor (GM): Jumps with both feet off the ground\n" .
+        "• Fine Motor (FM): Uses simple tools to solve tasks independently\n" .
+        "• Receptive Language (RL): Identifies 7 different body parts correctly\n" .
+        "• Expressive Language (EL): Responds with appropriate \"Yes\" or \"No\"\n" .
+        "• Personal & Social (PS): Able to wash and dry hands by themselves\n\n" .
+        "หมายเหตุ: จากหน้าระบบยังไม่ได้บันทึกผลผ่าน/ไม่ผ่าน และยังไม่มี personal notes\n\n" .
+        "อ้างอิงจากข้อมูลในระบบ CareNest";
+
+} else {
+
+    $replyText =
+        "สวัสดีค่ะ 🌿\n" .
+        "CareNest Bot พร้อมให้บริการ\n\n" .
+        "พิมพ์คำที่ต้องการดูข้อมูลได้เลย:\n" .
+        "• วัคซีน\n" .
+        "• โภชนาการ\n" .
+        "• พัฒนาการ";
+}
+
+$replyData = [
+    "replyToken" => $replyToken,
+    "messages" => [
+        [
+            "type" => "text",
+            "text" => $replyText
         ]
-    ];
+    ]
+];
 
-    $ch = curl_init("https://api.line.me/v2/bot/message/reply");
+$options = [
+    "http" => [
+        "method" => "POST",
+        "header" =>
+            "Content-Type: application/json\r\n" .
+            "Authorization: Bearer " . $accessToken . "\r\n",
+        "content" => json_encode($replyData, JSON_UNESCAPED_UNICODE),
+        "ignore_errors" => true
+    ]
+];
 
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($replyData, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "Authorization: Bearer " . $accessToken
-    ]);
-
-    $response = curl_exec($ch);
-    $curlError = curl_error($ch);
-
-    file_put_contents(
-        __DIR__ . "/reply_log.txt",
-        date("Y-m-d H:i:s") . PHP_EOL .
-        "Response: " . $response . PHP_EOL .
-        "Curl Error: " . $curlError . PHP_EOL . PHP_EOL,
-        FILE_APPEND
-    );
-
-    curl_close($ch);
-}
-
-/*
-|--------------------------------------------------------------------------
-| ฟังก์ชันเรียก API ของ CareNest ที่ InfinityFree
-|--------------------------------------------------------------------------
-*/
-function fetchCareNestReply($apiUrl, $apiSecret, $lineUserId, $command) {
-    $postFields = http_build_query([
-        "secret" => $apiSecret,
-        "line_user_id" => $lineUserId,
-        "command" => $command
-    ]);
-
-    $ch = curl_init($apiUrl);
-
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $postFields);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/x-www-form-urlencoded"
-    ]);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-
-    $response = curl_exec($ch);
-    $curlError = curl_error($ch);
-    curl_close($ch);
-
-    file_put_contents(
-        __DIR__ . "/api_call_log.txt",
-        date("Y-m-d H:i:s") . PHP_EOL .
-        "Command: " . $command . PHP_EOL .
-        "LINE User ID: " . $lineUserId . PHP_EOL .
-        "Response: " . $response . PHP_EOL .
-        "Curl Error: " . $curlError . PHP_EOL . PHP_EOL,
-        FILE_APPEND
-    );
-
-    if ($curlError) {
-        return "❌ ไม่สามารถเชื่อมต่อฐานข้อมูล CareNest ได้";
-    }
-
-    $json = json_decode($response, true);
-
-if (!$json || !isset($json["reply_text"])) {
-    return "❌ ระบบไม่สามารถประมวลผลข้อมูลได้\n\nResponse จาก API:\n" . mb_substr($response, 0, 800);
-}
-
-    return $json["reply_text"];
-}
-
-/*
-|--------------------------------------------------------------------------
-| ตรวจว่า environment variables ครบไหม
-|--------------------------------------------------------------------------
-*/
-if (!$accessToken || !$apiUrl || !$apiSecret) {
-    replyLine($replyToken, "❌ ยังไม่ได้ตั้งค่า environment variables บน Render", $accessToken);
-    http_response_code(200);
-    echo "OK";
-    exit;
-}
-
-/*
-|--------------------------------------------------------------------------
-| ดึงข้อความจากฐานข้อมูลผ่าน API
-|--------------------------------------------------------------------------
-*/
-$replyText = fetchCareNestReply($apiUrl, $apiSecret, $lineUserId, $messageText);
-
-/*
-|--------------------------------------------------------------------------
-| ส่งข้อความกลับ LINE
-|--------------------------------------------------------------------------
-*/
-replyLine($replyToken, $replyText, $accessToken);
+file_get_contents(
+    "https://api.line.me/v2/bot/message/reply",
+    false,
+    stream_context_create($options)
+);
 
 http_response_code(200);
 echo "OK";
