@@ -15,9 +15,26 @@ $dbPass = getenv("DB_PASS");
 $dbPort = getenv("DB_PORT") ?: 3306;
 
 /* =========================
-   Helper Functions
+   Helper: log สำหรับดูปัญหาใน Render
+========================= */
+function writeLog($text) {
+    file_put_contents(
+        __DIR__ . "/debug_log.txt",
+        date("Y-m-d H:i:s") . " | " . $text . PHP_EOL,
+        FILE_APPEND
+    );
+}
+
+/* =========================
+   Helper: ส่งข้อความกลับ LINE
+   ใช้ file_get_contents แทน curl
 ========================= */
 function replyLine($replyToken, $replyText, $accessToken) {
+    if (!$replyToken || !$accessToken) {
+        writeLog("Missing replyToken or accessToken");
+        return;
+    }
+
     $replyData = [
         "replyToken" => $replyToken,
         "messages" => [
@@ -28,19 +45,29 @@ function replyLine($replyToken, $replyText, $accessToken) {
         ]
     ];
 
-    $ch = curl_init("https://api.line.me/v2/bot/message/reply");
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($replyData, JSON_UNESCAPED_UNICODE));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        "Content-Type: application/json",
-        "Authorization: Bearer " . $accessToken
-    ]);
+    $options = [
+        "http" => [
+            "method" => "POST",
+            "header" =>
+                "Content-Type: application/json\r\n" .
+                "Authorization: Bearer " . $accessToken . "\r\n",
+            "content" => json_encode($replyData, JSON_UNESCAPED_UNICODE),
+            "ignore_errors" => true
+        ]
+    ];
 
-    curl_exec($ch);
-    curl_close($ch);
+    $response = file_get_contents(
+        "https://api.line.me/v2/bot/message/reply",
+        false,
+        stream_context_create($options)
+    );
+
+    writeLog("LINE Response: " . $response);
 }
 
+/* =========================
+   Helper: format วันที่
+========================= */
 function formatDateThai($date) {
     if (!$date || $date === "0000-00-00") {
         return "-";
@@ -54,6 +81,9 @@ function formatDateThai($date) {
     return date("d/m/Y", $time);
 }
 
+/* =========================
+   Helper: เลือกค่าจากหลายชื่อคอลัมน์
+========================= */
 function pick($row, $keys, $default = "-") {
     foreach ($keys as $key) {
         if (isset($row[$key]) && $row[$key] !== "" && $row[$key] !== null) {
@@ -67,6 +97,8 @@ function pick($row, $keys, $default = "-") {
    รับข้อมูลจาก LINE
 ========================= */
 $input = file_get_contents("php://input");
+writeLog("RAW INPUT: " . $input);
+
 $data = json_decode($input, true);
 
 if (!isset($data["events"][0])) {
@@ -83,15 +115,29 @@ if (($event["type"] ?? "") !== "message") {
     exit;
 }
 
+if (($event["message"]["type"] ?? "") !== "text") {
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
 $replyToken = $event["replyToken"] ?? "";
 $messageText = trim($event["message"]["text"] ?? "");
 $lineUserId = $event["source"]["userId"] ?? "";
+
+writeLog("MESSAGE: " . $messageText);
+writeLog("LINE USER ID: " . $lineUserId);
 
 /* =========================
    เช็ก Environment
 ========================= */
 if (!$accessToken || !$dbHost || !$dbName || !$dbUser || !$dbPass) {
-    replyLine($replyToken, "❌ ยังตั้งค่า Environment Variables บน Render ไม่ครบ", $accessToken);
+    replyLine(
+        $replyToken,
+        "❌ ยังตั้งค่า Environment Variables บน Render ไม่ครบ",
+        $accessToken
+    );
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -103,11 +149,14 @@ if (!$accessToken || !$dbHost || !$dbName || !$dbUser || !$dbPass) {
 $conn = @new mysqli($dbHost, $dbUser, $dbPass, $dbName, (int)$dbPort);
 
 if ($conn->connect_error) {
+    writeLog("DB CONNECT ERROR: " . $conn->connect_error);
+
     replyLine(
         $replyToken,
         "❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้\n\nError: " . $conn->connect_error,
         $accessToken
     );
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -144,11 +193,17 @@ if (!$user) {
         ORDER BY user_id ASC
         LIMIT 1
     ");
+
     $user = $result ? $result->fetch_assoc() : null;
 }
 
 if (!$user) {
-    replyLine($replyToken, "❌ ไม่พบข้อมูลผู้ใช้ในฐานข้อมูล", $accessToken);
+    replyLine(
+        $replyToken,
+        "❌ ไม่พบข้อมูลผู้ใช้ในฐานข้อมูล",
+        $accessToken
+    );
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -165,13 +220,30 @@ $stmt = $conn->prepare("
     LIMIT 1
 ");
 
+if (!$stmt) {
+    replyLine(
+        $replyToken,
+        "❌ ไม่สามารถอ่านข้อมูลเด็กได้\n\nError: " . $conn->error,
+        $accessToken
+    );
+
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
 $stmt->bind_param("i", $user["user_id"]);
 $stmt->execute();
 $child = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
 if (!$child) {
-    replyLine($replyToken, "❌ ยังไม่มีข้อมูลเด็กในระบบ", $accessToken);
+    replyLine(
+        $replyToken,
+        "❌ ยังไม่มีข้อมูลเด็กในระบบ",
+        $accessToken
+    );
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -193,6 +265,19 @@ if (mb_strpos($messageText, "วัคซีน") !== false) {
         ORDER BY date_administered DESC
         LIMIT 1
     ");
+
+    if (!$stmt) {
+        replyLine(
+            $replyToken,
+            "❌ อ่านข้อมูลวัคซีนไม่ได้\n\nError: " . $conn->error,
+            $accessToken
+        );
+
+        http_response_code(200);
+        echo "OK";
+        exit;
+    }
+
     $stmt->bind_param("i", $childId);
     $stmt->execute();
     $latest = $stmt->get_result()->fetch_assoc();
@@ -203,12 +288,17 @@ if (mb_strpos($messageText, "วัคซีน") !== false) {
         FROM vaccine_records
         WHERE child_id = ?
     ");
-    $stmt->bind_param("i", $childId);
-    $stmt->execute();
-    $count = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
 
-    $total = $count["total"] ?? 0;
+    $total = 0;
+
+    if ($stmt) {
+        $stmt->bind_param("i", $childId);
+        $stmt->execute();
+        $count = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $total = $count["total"] ?? 0;
+    }
 
     if ($latest) {
         $replyText =
@@ -228,6 +318,7 @@ if (mb_strpos($messageText, "วัคซีน") !== false) {
     }
 
     replyLine($replyToken, $replyText, $accessToken);
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -245,6 +336,19 @@ if (mb_strpos($messageText, "โภชนาการ") !== false) {
         ORDER BY growth_id DESC
         LIMIT 1
     ");
+
+    if (!$stmt) {
+        replyLine(
+            $replyToken,
+            "❌ อ่านข้อมูลโภชนาการไม่ได้\n\nError: " . $conn->error,
+            $accessToken
+        );
+
+        http_response_code(200);
+        echo "OK";
+        exit;
+    }
+
     $stmt->bind_param("i", $childId);
     $stmt->execute();
     $growth = $stmt->get_result()->fetch_assoc();
@@ -279,6 +383,7 @@ if (mb_strpos($messageText, "โภชนาการ") !== false) {
     }
 
     replyLine($replyToken, $replyText, $accessToken);
+
     http_response_code(200);
     echo "OK";
     exit;
@@ -296,6 +401,19 @@ if (mb_strpos($messageText, "พัฒนาการ") !== false) {
         ORDER BY dev_id DESC
         LIMIT 1
     ");
+
+    if (!$stmt) {
+        replyLine(
+            $replyToken,
+            "❌ อ่านข้อมูลพัฒนาการไม่ได้\n\nError: " . $conn->error,
+            $accessToken
+        );
+
+        http_response_code(200);
+        echo "OK";
+        exit;
+    }
+
     $stmt->bind_param("i", $childId);
     $stmt->execute();
     $dev = $stmt->get_result()->fetch_assoc();
@@ -306,12 +424,17 @@ if (mb_strpos($messageText, "พัฒนาการ") !== false) {
         FROM development_records
         WHERE child_id = ?
     ");
-    $stmt->bind_param("i", $childId);
-    $stmt->execute();
-    $count = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
 
-    $total = $count["total"] ?? 0;
+    $total = 0;
+
+    if ($stmt) {
+        $stmt->bind_param("i", $childId);
+        $stmt->execute();
+        $count = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $total = $count["total"] ?? 0;
+    }
 
     if ($dev) {
         $age = pick($dev, ["age_months", "month_age", "milestone_age"]);
@@ -337,6 +460,7 @@ if (mb_strpos($messageText, "พัฒนาการ") !== false) {
     }
 
     replyLine($replyToken, $replyText, $accessToken);
+
     http_response_code(200);
     echo "OK";
     exit;
