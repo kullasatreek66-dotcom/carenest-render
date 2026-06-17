@@ -146,14 +146,42 @@ if (!$accessToken || !$dbHost || !$dbName || !$dbUser || !$dbPass) {
 /* =========================
    เชื่อมฐานข้อมูล
 ========================= */
-$conn = @new mysqli($dbHost, $dbUser, $dbPass, $dbName, (int)$dbPort);
+mysqli_report(MYSQLI_REPORT_OFF);
 
-if ($conn->connect_error) {
-    writeLog("DB CONNECT ERROR: " . $conn->connect_error);
+$conn = mysqli_init();
+
+if (!$conn) {
+    replyLine(
+        $replyToken,
+        "❌ ไม่สามารถเริ่มต้นการเชื่อมต่อฐานข้อมูลได้",
+        $accessToken
+    );
+
+    http_response_code(200);
+    echo "OK";
+    exit;
+}
+
+/* ตั้ง timeout กันบอทเงียบ */
+mysqli_options($conn, MYSQLI_OPT_CONNECT_TIMEOUT, 5);
+
+$connected = @mysqli_real_connect(
+    $conn,
+    $dbHost,
+    $dbUser,
+    $dbPass,
+    $dbName,
+    (int)$dbPort
+);
+
+if (!$connected) {
+    $dbError = mysqli_connect_error();
+
+    writeLog("DB CONNECT ERROR: " . $dbError);
 
     replyLine(
         $replyToken,
-        "❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้\n\nError: " . $conn->connect_error,
+        "❌ ไม่สามารถเชื่อมต่อฐานข้อมูล CareNest ได้\n\nError: " . $dbError,
         $accessToken
     );
 
