@@ -127,9 +127,9 @@ function fetchCareNestReply($apiUrl, $apiSecret, $lineUserId, $command) {
 
     $json = json_decode($response, true);
 
-    if (!$json || !isset($json["reply_text"])) {
-        return "❌ ระบบไม่สามารถประมวลผลข้อมูลได้";
-    }
+if (!$json || !isset($json["reply_text"])) {
+    return "❌ ระบบไม่สามารถประมวลผลข้อมูลได้\n\nResponse จาก API:\n" . mb_substr($response, 0, 800);
+}
 
     return $json["reply_text"];
 }
